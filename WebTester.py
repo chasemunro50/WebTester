@@ -1,173 +1,191 @@
 import sys
 from socket import *
+import ssl
 
-"""
-Program Structure
-1. Accept URI from STDIN, parse it
-2. Connect to the server of the URI
-3. Send an HTTP Request
-4. Receive an HTTP Request
-5. Routine to print response from server
-6. Analyze the HTTP response 
-7. Add functionality for multiple request
-"""
-#TODO: fix web_requester (connect, send) to handle redirects
-#  URI FORMAT protocol://host[:port]/filepath
-#TODO: Build redirect location for status_code_processor
-#TODO: Build a HTTP2 Detector Function, See Tutorial 1 page 29-30
-        #1. try options request
-        #2. Try TLS-ALPN (TSL Handshake)
-
-
-PORT = 80
-supports_http2 = "no"
 cookies = []
-Password_protected = "no"
-parsed_data = None
-HTTP_version = None
-HTTP_status = None
 
-
-def web_parser(data):
-
-    parsed_data = str(data).replace('\\n', '').split('\\r') 
-    version = parsed_data[0][2:] #Removing b"
-    #print(parsed_data) #DEBUGGING
-    HTTP_version = version.split()[0]
-    status_code = int(version.split()[1])
-
-    return parsed_data, status_code
-
-
-
-# Takes the URI input, returns data from the server
-def web_requester(uri):
-
-    HOST = (uri, PORT)
-    s = socket(AF_INET,SOCK_STREAM) 
-
-    s.connect(HOST) #2. Connect to the server of the URI
-
-    s.send(b"GET /index.html HTTP/1.0\n\n") #3. Sending HTTP Request 
+#Input: User-inputted URI
+#Output: Parsed URI, split into port, host, and path
+def uriparser(user_input):
+    # Default
+    port = 80
+    protocol = "http"
+    path = "/"
     
-    data = s.recv(10000) #4. Receive an HTTP Request
+    # Check protocol
+    if user_input.startswith("https://"):
+        protocol = "https"
+        port = 443
+        site = user_input[len("https://"):]
+    elif user_input.startswith("http://"):
+        site = user_input[len("http://"):]
+        protocol = "http"
+        port = 80
+    else:
+        site = user_input
+    
+    # parsing host and path
+    if "/" in site:
+        host, path = site.split("/", 1)
+        path = "/" + path
+    else:
+        host = site
+        path = "/"
+    if ":" in host:
+        components= host.split(":")
+        host = components[0]
+        port = int(components[1])
 
-    s.close() 
+    #DEBUGGING
+    # print("Parser Output:")
+    # print(f"Host: {host}")
+    # print(f"Port: {port}")
+    # print(f"Path: {path}")
 
-    return data
 
-# Final output
-def final_ouput(uri):
+    return protocol, host, port, path
 
-    print("Output:")
-    print("website: " + uri) 
-    print("1. Supports http2: " + supports_http2) 
-    print("2. List of Cookies:")
+def web_requests(protocol, host, port, path):
+    supports_http2 = "no"   #Default  
+
+    s = socket(AF_INET,SOCK_STREAM) 
+    HOST = (host, port)
+    
+    #3. Setup connection
+    try:
+        s.connect(HOST) 
+    except Exception as e:
+        print(f"Error: exception{e}")
+        exit(1)
+
+    #4. 
+    try:
+        if protocol == "https":
+            context = ssl.create_default_context()
+            context.set_alpn_protocols(['http/1.1', 'h2'])
+            s = context.wrap_socket(s, server_hostname=host)
+            protocol_used = s.selected_alpn_protocol()
+            if protocol_used == 'h2':
+                supports_http2 = "yes"
+        
+        if not path:
+            path = "/"
+
+        #4. Send initial HTTP request
+        request = f"GET {path} HTTP/1.1\r\n"
+        request += f"Host: {host}\r\n"
+        request += f"Connection: close\r\n"
+        request += "\r\n"
+        
+        s.send(request.encode())
+
+        data = s.recv(10000).decode("utf8")
+        s.close()
+
+    except Exception as e:
+        print(f"error, exception: {e}")
+        exit(1)
+
+    return data, supports_http2
+
+def data_parser(data):
+    header = data.split("\r\n\r\n")[0]
+    header_lines = header.split("\r\n")
+    status_line = header_lines[0]
+    password_protected = "no"
+    location = None
+    
+    try:
+        response_protocol = status_line.split()[0]
+        status_code = int(status_line.split()[1])
+    except Exception as e:
+        print(f"sorry, there was a problem: {e}")
+        exit(1)    
+    
+    #Get location if redirect code
+    if 300 <= status_code <= 399:
+        for line in header_lines[1:]:
+            if line.lower().startswith("location:"):
+                location = line.split(":", 1)[1].strip()
+   
+    elif status_code >= 400:
+        if status_code == 401:
+            password_protected = "yes"
+        else:
+            print('Sorry, something went wrong')
+            exit(1)
+
+    #Checking for cookies
+    for line in header_lines[1:]:
+        if line.lower().startswith("set-cookie:"):
+            cookies.append(line)
+
+    return response_protocol, status_code, location, password_protected
+
+def cookie_parser(cookies): #TODO: Fix formatting issue
+    pretty_cookies = []
     for cookie in cookies:
-        print(cookie) 
-    print("3. Password-protected: " + Password_protected)
+        # print(f"Heres the cookie: {cookie}")
+        if "expires" in cookie: expires = True
+        else: expires = False
+        if "domain" in cookie: domain = True
+        else: domain = False
 
+        domain = ""
+        expires = ""
+        components = cookie.split(";")
+        cookie_name =(components[0].split("=")[0].split()[1])
+        
+        for component in components:
+            if "domain" in component:
+                domain = component.split("=")[1]
+            elif "expires" in component:
+                expires = component.split("=")[1]
+        
+        pretty_cookie = f"cookie name: {cookie_name}"
+        if domain != "":
+            pretty_cookie += f", domain name: {domain}"
+        if expires != "":
+            pretty_cookie += f", expires time: {expires}"
 
-def status_code_processor(code_received, parsed_data):
-
-    if code_received == 200:
-        print("status code 200, everything went okay with request") 
-        successful_request(parsed_data) #6. Analyze http response
-
-    elif code_received == 401:
-        Password_protected = "yes"
-        print("status code 401, website is password protected")
-    elif code_received == 301:
-        print("status code 301, moved permanently")
-
-    elif code_received == 302:
-        print("status code 302, moved temporarily")
-        #Looking for redirection
-        for data in parsed_data:
-            if "Location" in data:
-                redirect_location = data.split()[1] 
-                print(redirect_location)
+        pretty_cookies.append(pretty_cookie)
+    return pretty_cookies
         
 
 
-
-    elif code_received == 404:
-        print("status code 404, not found")
-    elif code_received == 505:
-        print("status code 505, HTTP version not supported")
-
-
-#Function handles data for status code 200, successful request
-def successful_request(parsed_data):
-
-    for item in parsed_data:
-
-        #Parsing cookies
-        if "Set-Cookie" in item: 
-            expire_time = False
-            domain = False
-
-            if "expires" in item:
-                expire_time = True
-            if "domain" in item:
-                domain = True
-            components = item.split(';')
-            #print(components) #DEBUGGING
-            cookie_name =(components[0].split("=")[0]) 
-
-
-            if expire_time and domain:
-                for component in components: 
-                    if "expires" in component:
-                        cookie_expire_time = component
-                    elif "domain" in component:
-                        cookie_domain = component
-
-                cookies.append(cookie_name + "," + cookie_expire_time + "," + cookie_domain)    
-           
-            elif expire_time:
-                for component in components:
-                    if "expires" in component:
-                        cookies.append(cookie_name + "," + component)
-            elif domain:
-                for component in components:
-                    if "domain" in component:
-                        cookies.append(cookie_name + "," + component)
-            else:
-                cookies.append(cookie_name)
-
-
-#Breaks data into header and body for debugging
-def deconstructor(data): 
-    deconstructed_data = data.split(b"\r\n\r\n")
-    print("Header:")
-    print(deconstructed_data[0])
-    try:
-        print("body:")
-        print(deconstructed_data[1])
-    except error:
-        print("error, no packet body")
-
-
-
 def main():
-    #1. Accept URI from STDIN
-    valid_input = False
-    while not valid_input:
-        try:   
-            uri = sys.argv[1]
-        except IndexError:
-            uri = input("Input URI: ")
-        if uri is not None:
-            valid_input = True
+    #1. Read URI from STDIN
+    try:
+        uri= sys.argv[1]
+    except error:
+        uri = input("Input URI: ")
 
-    data = web_requester(uri) #Returns data from HTTP Request
+    #2. Parse URI 
+    protocol, host, port, path = uriparser(uri)
 
-    parsed_data, status_code = web_parser(data) #Splits data, gets HTTP version, status code
+    #3. Establish Connection
+    data, supportshttp2 = web_requests(protocol, host,port,path)
+    
 
-    status_code_processor(status_code,parsed_data) #processes status code
+    #data_parser
+    protocol, status_code, location, password_protected = data_parser(data)
 
-    final_ouput(uri) #Final output
+    
+    
+    while 300 <= status_code <= 399 and location:
+        max_redirects = 10
+        redirects = 0
+        while redirects < max_redirects and location:
+            print(f"redirecting to {location}")
+            protocol, host, port, path = uriparser(location)
+            data, supportshttp2 = web_requests(protocol, host, port, path)
+            protocol, status_code, location, password_protected = data_parser(data)
+            redirects += 1
 
+    pretty_cookies = cookie_parser(cookies)
+    print(f"1. Supports http2: {supportshttp2}")
+    print("2. List of Cookies:")
+    [print(pretty_cookie) for pretty_cookie in pretty_cookies]
+    print(f"3. Password-protected: {password_protected}")
 
 main()
