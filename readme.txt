@@ -12,7 +12,7 @@ MUST BE RUNNING at least python 3.6, implemented fstrings that won't work on old
 Input: call as specified in the assignment description
 Format: python3 WebTester.py domain_name
 
-EXAMPLES
+Input EXAMPLES
 python3 WebTester.py www.uvic.ca
 python3 WebTester.py uvic.ca
 python3 WebTester.py https://www.google.com
@@ -28,6 +28,26 @@ OUTPUT:
     3. Returns whether or not the website is password protected
         - This is based on receiving a 401 status code in response to outgoing request   
 
+
+Output Examples
+Input: python3 WebTester.py uvic.ca
+Output: 
+1. Supports http2: no
+2. List of Cookies:
+cookie name: PHPSESSID
+cookie name: uvic_bar, domain name: .uvic.ca, expires time: Thu, 01-Jan-1970 00:00:01 GMT
+cookie name: www_def
+cookie name: TS018b3cbd
+cookie name: TS0165a077, domain name: .uvic.ca
+3. Password-protected: no
+
+Input python3 WebTester.py https://www.google.com
+Output:
+1. Supports http2: yes
+2. List of Cookies:
+cookie name: AEC, domain name: .google.com, expires time: Sun, 29-Mar-2026 19:58:58 GMT
+cookie name: NID, domain name: .google.com, expires time: Wed, 01-Apr-2026 19:58:58 GMT
+3. Password-protected: no
 
 
 OVERALL PROGRAM STRUCTURE:
